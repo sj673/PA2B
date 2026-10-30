@@ -3,6 +3,8 @@ package dispatcher;
 import dispatcher.policies.Policy;
 import driver.Driver;
 import trip.Trip;
+import logbook.EventType;
+import driver.Message;
 
 import java.util.*;
 
@@ -28,9 +30,10 @@ public class Dispatcher {
      * The ready line, in the order the trips joined it, oldest first.
      */
     private final List<Trip> readyLine = new LinkedList<>();
-
-    // TODO: add the other fields you need, such as the waiting list, the list of finished trips, and what you need to
-    //  count stretch lengths
+    private final List<Trip> waitingLine = new LinkedList<>();
+    private final List<Trip> finishedTrips = new LinkedList<>();
+    private int currentStretchLength = 0;
+    private int lastDispatchTick = 0;
 
     /**
      * Creates a dispatcher for the given driver and sets the driver's dispatcher to this new dispatcher
@@ -74,7 +77,101 @@ public class Dispatcher {
      * starting again. The current tick number is {@code driver.getClock().getTickNum()}.
      */
     public void dispatch() {
-        // TODO
+        boolean tripLeftThisTick = false;
+        int currentTick = driver.getClock().getTickNum();
+
+        if(current != null && currentTick > lastDispatchTick){
+            currentStretchLength += currentTick - lastDispatchTick - 1;
+        }
+        lastDispatchTick = currentTick;
+        // if(current == null && !readyLine.isEmpty()){
+        //     current = policy.pickNext(Collections.unmodifiableList(readyLine));
+        //     readyLine.remove(current);
+        //     if(policy.timeSlice() != 0){
+        //         driver.startTimer(policy.timeSlice());
+        //     }
+        //     if(tripLeftThisTick || isNull){
+        //         driver.setTrip(current);
+        //     }
+        // }
+        // if(current != null){
+        //     currentStretchLength = driver.getClock().getTickNum();
+        // }
+
+
+        while(!driver.getMessageQueue().isEmpty()){
+            Message m = driver.getMessageQueue().poll();
+            if(m.type() == (Message.Type.STOP_SIGN)){
+                if(current != null){
+                    current.saveProgress(driver.getNextAddress(), currentStretchLength);
+                    currentStretchLength = 0;
+                    readyLine.add(current);
+                    current = null;
+                    tripLeftThisTick = true;
+                }
+                
+            }
+            else if (m.type() == (Message.Type.RED_LIGHT)){
+                if(current != null){
+                    current.saveProgress(driver.getNextAddress(), currentStretchLength);
+                    currentStretchLength = 0;
+                    waitingLine.add(current);
+                    current = null;
+                    tripLeftThisTick = true;
+                }
+            }
+            else if (m.type() == (Message.Type.GREEN_LIGHT)){
+                for(int i = 0; i < waitingLine.size(); i++){
+                    Trip trip = waitingLine.get(i);
+                    if(trip.getVehicle().id() == m.vehicleId()){
+                        readyLine.add(waitingLine.get(i));
+                        waitingLine.remove(waitingLine.get(i));
+
+                        break;
+                    }
+                }
+            }
+            else if (m.type() == (Message.Type.DESTINATION)){
+                if (!(current == null)){
+                    current.saveProgress(driver.getNextAddress(), currentStretchLength);
+                    currentStretchLength = 0;
+                    finishedTrips.add(current);
+                    driver.getLogbook().record(current.getVehicle(), EventType.TRIP_COMPLETE);
+                    current = null;
+                    tripLeftThisTick = true;
+                }
+
+            }
+            else if (m.type() == (Message.Type.TIMER)){
+                if(!tripLeftThisTick && current != null){
+                    current.saveProgress(driver.getNextAddress(), currentStretchLength);
+                    currentStretchLength = 0;
+                    readyLine.add(current);
+
+                    current = null;
+                    tripLeftThisTick = true;
+                }
+
+            }
+
+            
+        }
+
+        boolean picked = false;
+        if(current == null && !readyLine.isEmpty()){
+            current = policy.pickNext(Collections.unmodifiableList(readyLine));
+            readyLine.remove(current);
+            currentStretchLength = 0;
+            if(policy.timeSlice() != 0){
+                driver.startTimer(policy.timeSlice());
+            }
+            picked = true;
+
+        }
+
+        if(picked || tripLeftThisTick){
+            driver.setTrip(current);
+        }
     }
 
     /**
@@ -92,7 +189,8 @@ public class Dispatcher {
      * @param trip the Trip to add
      */
     public void addNewTrip(Trip trip) {
-        // TODO
+        readyLine.add(trip);
+        driver.getLogbook().record(trip.getVehicle(),EventType.TRIP_START);
     }
 
     /**
@@ -102,8 +200,14 @@ public class Dispatcher {
      * @return the total number of unfinished trips
      */
     public int getNumTrips() {
-        // TODO
-        return 0;
+        int size = 0;
+        //current trip
+        if(current != null){
+            size += 1;
+        }
+        size += readyLine.size();
+        size += waitingLine.size();
+        return size;
     }
 
     /**
@@ -112,8 +216,7 @@ public class Dispatcher {
      * @return the number of trips in the ready line
      */
     public int getReadyLineSize() {
-        // TODO
-        return 0;
+        return readyLine.size();
     }
 
     /**
@@ -122,8 +225,7 @@ public class Dispatcher {
      * @return the number of trips in the waiting list
      */
     public int getWaitingListSize() {
-        // TODO
-        return 0;
+        return waitingLine.size();
     }
 
     /**
@@ -132,7 +234,6 @@ public class Dispatcher {
      * @return the list of finished trips.
      */
     public List<Trip> getFinished() {
-        // TODO
-        return null;
+        return finishedTrips;
     }
 }

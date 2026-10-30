@@ -13,7 +13,17 @@ public class VIPFirst implements Policy {
 
     @Override
     public Trip pickNext(List<Trip> readyLine) {
-        // TODO
-        return null;
+        Trip f = null;
+        double lowest = Double.MAX_VALUE;
+    
+        for(int i = 0; i < readyLine.size(); i++){
+            Trip trip = readyLine.get(i);
+            if(lowest > trip.getPriority()){
+                lowest = trip.getPriority();
+                f = trip;
+            }
+        }
+
+        return f;
     }
 }
