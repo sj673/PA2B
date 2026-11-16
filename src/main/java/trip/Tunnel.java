@@ -1,9 +1,18 @@
 package trip;
 
 import driver.Driver;
+import driver.Message;
+import logbook.EventType;
 import trip.stoppoints.StopPoint;
 
+import java.lang.reflect.Array;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
+
 
 /**
  * A tunnel: a road that every driver in the city shares. Similar to a critical section guarding a shared resource.
@@ -20,6 +29,12 @@ import java.util.Map;
 public class Tunnel extends Road {
 
     private final Map<Vehicle.Type, Integer> capacities;
+    private final ReentrantLock lock = new ReentrantLock();
+    private final Condition logbookReady = lock.newCondition();
+    private ArrayList<Vehicle> v = new ArrayList<Vehicle>();
+    private Map<Vehicle, Driver> vehicleDriver = new HashMap<>();
+    private ArrayList<Vehicle> waiting = new ArrayList<>();
+
 
     // TODO: add the fields you need, such as the vehicles in the tunnel and the vehicles (with their drivers) waiting
     //  to enter
@@ -56,8 +71,28 @@ public class Tunnel extends Road {
      */
     @Override
     public boolean enter(Driver driver, Vehicle vehicle) {
-        // TODO
-        return false;
+        lock.lock();
+        try{
+            Vehicle.Type t = vehicle.type();
+            int capacity = capacities.get(t);
+            if(!v.isEmpty() && !(t.equals(v.get(0).type()) && v.size() < capacity)){
+                driver.getLogbook().record(vehicle, this, EventType.TUNNEL_ENTER_FAILED);
+                if(!waiting.contains(vehicle)){
+                    waiting.add(vehicle);
+                    vehicleDriver.put(vehicle, driver);
+                }
+                driver.sendMessage(new Message(vehicle.id(), Message.Type.RED_LIGHT));
+                return false;
+            }
+
+            v.add(vehicle);
+            driver.getLogbook().record(vehicle, this, EventType.TUNNEL_ENTER);
+            return true;
+
+        }finally{
+            lock.unlock();
+        }
+
     }
 
     /**
@@ -73,7 +108,26 @@ public class Tunnel extends Road {
      */
     @Override
     public void exit(Driver driver, Vehicle vehicle) {
-        // TODO
+        lock.lock();
+        try{
+            if(v.remove(vehicle)){
+                driver.getLogbook().record(vehicle, this, EventType.TUNNEL_EXIT);
+                if(stopPoint != null){
+                    stopPoint.goThrough(driver, vehicle);
+                }
+
+                while(!waiting.isEmpty()){
+                    Vehicle ve = waiting.get(0);
+                    Driver d = vehicleDriver.get(ve);
+                    d.getClock().setAlarm(1, () -> d.sendMessage(new Message(ve.id(), Message.Type.GREEN_LIGHT)));
+                    waiting.remove(0);
+                    vehicleDriver.remove(ve);
+                }
+            }
+
+        }finally{
+            lock.unlock();
+        }
     }
 
     public Map<Vehicle.Type, Integer> getCapacities() {
